@@ -14,11 +14,10 @@ from database.queries import get_all_users_reminders, get_all_users, get_today_t
 from bot.handlers import start, plan, settings, stats, ai_handler
 from bot.keyboards import get_tasks_keyboard
 
-# Send dynamic reminder checklist based on user progress (Smart Logic)
+# --- 1. SMART REMINDERS LOGIC ---
 async def send_reminders(bot: Bot):
     now = datetime.now().strftime("%H:%M")
     users = await get_all_users_reminders()
-
     today_date = datetime.now().date()
     tomorrow_date = today_date + timedelta(days=1)
 
@@ -26,85 +25,78 @@ async def send_reminders(bot: Bot):
         if rem_time == now:
             try:
                 today_tasks = await get_today_tasks(user_id, today_date)
-
                 t_total = len(today_tasks)
                 t_comp = sum(1 for t in today_tasks if t[2] == 1)
 
-                # CASE 1: User has unfinished tasks for today
                 if t_total > 0 and t_comp < t_total:
-                    summary_text = f"📊 **Daily Progress:** You completed {t_comp} out of {t_total} tasks so far!\n\n"
+                    summary = f"📊 **Daily Progress:** {t_comp}/{t_total} tasks done.\n\n"
                     await bot.send_message(
                         user_id,
-                        f"{summary_text}⏰ Here are your remaining tasks for **today** ({today_date}):",
+                        f"{summary}⏰ Remaining tasks for **today**:",
                         reply_markup=get_tasks_keyboard(today_tasks, today_date.isoformat()),
                         parse_mode="Markdown"
                     )
-
-                # CASE 2: All tasks are done (or no tasks for today at all)
                 else:
-                    summary_text = ""
-                    if t_total > 0 and t_comp == t_total:
-                        summary_text = f"🎉 **Awesome job!** You completed all {t_total} tasks for today!\n\n"
-
+                    summary = f"🎉 **Awesome!** All tasks done!\n\n" if t_total > 0 else ""
                     tomorrow_tasks = await get_today_tasks(user_id, tomorrow_date)
-
                     if tomorrow_tasks:
                         await bot.send_message(
                             user_id,
-                            f"{summary_text}⏰ Here is your plan for **tomorrow** ({tomorrow_date}):",
+                            f"{summary}⏰ Plan for **tomorrow**:",
                             reply_markup=get_tasks_keyboard(tomorrow_tasks, tomorrow_date.isoformat()),
                             parse_mode="Markdown"
                         )
                     else:
                         await bot.send_message(
                             user_id,
-                            f"{summary_text}⏰ You have no tasks for **tomorrow** ({tomorrow_date}) yet!\nTap /plan to create a checklist.",
+                            f"{summary}⏰ No tasks for tomorrow yet. Tap /plan!",
                             parse_mode="Markdown"
                         )
             except Exception as e:
-                logging.error(f"Reminder error for {user_id}: {e}")
-                continue
+                logging.error(f"Reminder error: {e}")
 
-# Send morning briefing with today's pending tasks
+# --- 2. MORNING BRIEFING ---
 async def send_morning_briefing(bot: Bot):
-    now = datetime.now().strftime("%H:%M")
-
-    if now == "07:00":
+    if datetime.now().strftime("%H:%M") == "07:00":
         today = datetime.now().date()
-        users = await get_all_users()
+        for user_id in await get_all_users():
+            try:
+                tasks = await get_today_tasks(user_id, today)
+                pending = [t for t in tasks if t[2] == 0]
+                if pending:
+                    txt = "\n".join([f"🔹 {t[1]}" for t in pending])
+                    await bot.send_message(user_id, f"Good morning! ☀️\nToday's plan:\n\n{txt}\n\nTap /tasks!")
+            except: continue
 
-        for user_id in users:
-            tasks = await get_today_tasks(user_id, today)
-            pending_tasks = [t for t in tasks if t[2] == 0]
-
-            if pending_tasks:
-                tasks_text = "\n".join([f"🔹 {t[1]}" for t in pending_tasks])
-                briefing_msg = (
-                    "Good morning! ☀️\n"
-                    "Here is your plan for today:\n\n"
-                    f"{tasks_text}\n\n"
-                    "Tap /tasks to open your checklist and start working!"
-                )
-                try:
-                    await bot.send_message(user_id, briefing_msg)
-                except Exception:
-                    continue
-
-# Register commands for the Telegram menu button
+# --- 3. BOT COMMANDS ---
 async def set_bot_commands(bot: Bot):
-    commands =[
-        BotCommand(command="plan", description="Plan new tasks"),
-        BotCommand(command="tasks", description="View and manage checklists"),
+    commands = [
+        BotCommand(command="plan", description="Plan tasks"),
+        BotCommand(command="tasks", description="Checklists"),
         BotCommand(command="stats", description="Productivity chart"),
-        BotCommand(command="tips", description="Smart AI advice"),
-        BotCommand(command="history", description="View past days"),
-        BotCommand(command="remind", description="Set up reminders"),
-        BotCommand(command="support", description="FAQ & Admin contact"),
-        BotCommand(command="help", description="Show help message")
+        BotCommand(command="tips", description="AI Advice"),
+        BotCommand(command="history", description="View history"),
+        BotCommand(command="remind", description="Setup reminders"),
+        BotCommand(command="help", description="Show help")
     ]
     await bot.set_my_commands(commands)
 
-# Application entry point
+# --- 4. WEB SERVER FOR RENDER HEALTH CHECK ---
+async def handle_ping(request):
+    return web.Response(text="Bot is running!")
+
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get('/', handle_ping)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    # Binding to 0.0.0.0 and using PORT from environment
+    port = int(os.environ.get("PORT", 8080))
+    site = web.TCPSite(runner, '0.0.0.0', port)
+    await site.start()
+    logging.info(f"🌐 Web server started on port {port}")
+
+# --- 5. MAIN ENTRY POINT ---
 async def main():
     logging.basicConfig(level=logging.INFO)
     await init_db()
@@ -112,20 +104,16 @@ async def main():
     bot = Bot(token=BOT_TOKEN)
     dp = Dispatcher()
 
-    # Web stub for Render
-    app = web.Application()
-    app.router.add_get('/', lambda r: web.Response(text="Bot is running!"))
-    runner = web.AppRunner(app)
-    await runner.setup()
-    await web.TCPSite(runner, '0.0.0.0', int(os.environ.get("PORT", 8080))).start()
+    # START WEB SERVER FOR RENDER
+    await start_web_server()
 
-    # Initialize scheduler for automated background jobs
+    # SCHEDULER
     scheduler = AsyncIOScheduler()
     scheduler.add_job(send_reminders, "interval", minutes=1, args=(bot,))
     scheduler.add_job(send_morning_briefing, "interval", minutes=1, args=(bot,))
     scheduler.start()
 
-    # Register application routers
+    # ROUTERS
     dp.include_router(start.router)
     dp.include_router(plan.router)
     dp.include_router(settings.router)
