@@ -1,0 +1,9 @@
+aiogram
+aiohttp
+sqlalchemy
+aiosqlite
+apscheduler
+matplotlib
+python-dotenv
+pydantic-settings
+greenlet
