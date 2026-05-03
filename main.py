@@ -1,6 +1,8 @@
 import asyncio
 import logging
+import os
 from datetime import datetime, timedelta
+from aiohttp import web
 from aiogram import Bot, Dispatcher
 from aiogram.types import BotCommand
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -109,6 +111,13 @@ async def main():
 
     bot = Bot(token=BOT_TOKEN)
     dp = Dispatcher()
+
+    # Web stub for Render
+    app = web.Application()
+    app.router.add_get('/', lambda r: web.Response(text="Bot is running!"))
+    runner = web.AppRunner(app)
+    await runner.setup()
+    await web.TCPSite(runner, '0.0.0.0', int(os.environ.get("PORT", 8080))).start()
 
     # Initialize scheduler for automated background jobs
     scheduler = AsyncIOScheduler()
